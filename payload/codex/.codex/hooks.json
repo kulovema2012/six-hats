@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh .codex/hooks/six-hats-stop.sh",
+            "timeout": 15,
+            "statusMessage": "six-hats: checking whether the run is finished"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "hat-black",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh .codex/hooks/six-hats-black-findings.sh",
+            "timeout": 15,
+            "statusMessage": "six-hats: checking that BLACK reported something"
+          }
+        ]
+      }
+    ]
+  }
+}

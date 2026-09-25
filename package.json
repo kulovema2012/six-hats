@@ -1,0 +1,35 @@
+{
+  "name": "six-hats",
+  "version": "1.0.0",
+  "description": "Six Hats: a six-agent task-execution team (White, Green, Yellow, Black, Red, Blue) for Claude Code and Codex, with a ChatGPT version",
+  "type": "module",
+  "bin": {
+    "six-hats": "six-hats.mjs"
+  },
+  "files": [
+    "six-hats.mjs",
+    "payload/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "skill",
+    "subagents",
+    "six-thinking-hats",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kulovema2012/six-hats.git"
+  },
+  "homepage": "https://github.com/kulovema2012/six-hats#readme",
+  "bugs": {
+    "url": "https://github.com/kulovema2012/six-hats/issues"
+  }
+}

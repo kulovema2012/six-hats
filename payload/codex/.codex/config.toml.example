@@ -1,0 +1,156 @@
+########################################################################
+#  six-hats — EXAMPLE Codex configuration
+#
+#  THIS IS AN EXAMPLE. DO NOT COPY IT OVER YOUR OWN config.toml.
+#
+#  Codex reads one config file at ~/.codex/config.toml. If you replace
+#  that file with this one you will lose every other setting you have.
+#  Open your existing config.toml and merge in only the lines you want.
+#
+#  Everything here is optional. The six-hats skill runs on Codex's
+#  default settings. These keys tune it.
+#
+#  ONE THING ABOUT TOML THAT CATCHES PEOPLE OUT
+#  A key belongs to whatever [section] header appears above it. So
+#  top-level keys — the ones that are not inside any section — have to
+#  come BEFORE the first [section] header in the file. That is why the
+#  order below looks back to front: the plain settings come first, and
+#  the sectioned ones follow. If you paste `approval_policy` below your
+#  `[agents]` header it silently becomes `agents.approval_policy`,
+#  which is not a real setting and will be ignored.
+########################################################################
+
+
+########################################################################
+#  1. Approval and sandbox for unattended runs  (TOP-LEVEL KEYS)
+#
+#  A Tier 4 six-hats run can take several turns. If you want it to get
+#  through those turns without stopping to ask you about every command,
+#  this is the combination to use.
+########################################################################
+
+# never       = run without asking for approval. Use this only together
+#               with a sandbox, because nothing will stop and check
+#               with you.
+# on-request  = the model asks when it wants to step outside the
+#               sandbox. This is the sane default for attended work.
+# granular    = finer-grained prompting.
+#
+# ("untrusted" is no longer supported. If you have it in your config,
+#  it needs to change.)
+approval_policy = "never"
+
+# read-only          = can read the workspace, cannot write.
+# workspace-write    = can read and write inside the workspace, and
+#                      nothing outside it.
+# danger-full-access = no sandbox at all.
+#
+# workspace-write is the right setting for an unattended six-hats run.
+# GREEN needs to write the deliverable and BLACK needs to run the real
+# tests against it, and both of those happen inside the workspace.
+# Nothing in the method needs to touch the rest of your machine.
+sandbox_mode = "workspace-write"
+
+# Codex reads AGENTS.md from its own home directory and then from the
+# git root down to your working directory, concatenating them, with the
+# files closest to your working directory taking priority. The default
+# cap on the total is 32 KiB. Raise it only if you are actually hitting
+# the limit.
+# project_doc_max_bytes = 32768
+
+
+########################################################################
+#  2. Subagents
+#
+#  The six hats are Codex subagents. This section controls them.
+#  Subagents inherit the parent session's model, reasoning effort,
+#  sandbox policy, permission mode, MCP servers and skills config
+#  UNLESS their own agent file overrides it — and the six shipped agent
+#  files do set `sandbox_mode` and `model_reasoning_effort` for
+#  themselves. Precedence is: agent file, then this section, then the
+#  parent session. So there is usually very little to set here.
+########################################################################
+
+[agents]
+
+# Subagents are enabled by default. This line is here so you can find
+# the switch if you ever need to turn them off.
+enabled = true
+
+# How many subagent threads may run at once in one session.
+#
+# The six-hats method runs up to three hats in parallel (BLACK, RED and
+# YELLOW all review the build at the same time), and at Tier 4 those
+# hats spawn workers of their own. A limit of 4 covers the plain case;
+# raise it toward the low teens if you use Tier 4 fan-out often.
+#
+# Going higher than that is rarely worth it: results start arriving
+# faster than they can be merged well, and merging badly is worse than
+# running fewer agents.
+#
+# If your Codex version rejects this key, it is an older build that
+# uses the legacy alias `max_threads` instead. Same meaning.
+max_concurrent_threads_per_session = 4
+# max_threads = 4          # legacy alias, older versions only
+
+# Optional: run subagents on a different model from the parent.
+#
+# Leave these commented out unless you have a reason. Subagents inherit
+# the parent's model by default, which is normally what you want —
+# BLACK is doing adversarial review and GREEN is writing the
+# deliverable, and neither job benefits from a weaker model.
+#
+# A reasonable exception is running WHITE, RED and YELLOW cheaper.
+# These keys set one default for ALL subagents, so you cannot vary them
+# per hat from here — per-hat values go in the agent's own TOML file,
+# which overrides whatever you put here. The shipped files already set
+# reasoning effort per hat and deliberately leave `model` alone.
+#
+# Set the value to a model ID your account actually has.
+# default_subagent_model = "<model-id>"
+# default_subagent_reasoning_effort = "medium"
+
+
+########################################################################
+#  3. Sandbox network access
+########################################################################
+
+[sandbox_workspace_write]
+
+# Network access from inside the sandbox. Off by default.
+#
+# Turn this on only if the task genuinely needs it — WHITE fetching
+# live docs, BLACK running tests that hit a local service, installing
+# dependencies. An unattended agent with network access and no approval
+# step is a meaningful amount of trust to extend.
+network_access = false
+
+
+########################################################################
+#  4. The Stop hook (optional)
+#
+#  The six-hats package ships a Stop hook that keeps a multi-round run
+#  going without you typing "continue" between rounds.
+#
+#  The package installs it as a separate file, .codex/hooks.json, which
+#  is the simpler option and keeps this config clean. You only need the
+#  block below if you would rather configure hooks inline here.
+#
+#  Use ONE of the two. Do not install the hook in both places or it
+#  will run twice.
+#
+#  Note: the Stop event does not support matchers. Any `matcher` key
+#  you set on a Stop hook is ignored. SubagentStop is different — it
+#  does support a matcher, applied to `agent_type` — which is how the
+#  optional BLACK findings hook targets one hat instead of all six.
+########################################################################
+
+# [[hooks.Stop]]
+#   [[hooks.Stop.hooks]]
+#   type = "command"
+#   command = "sh .codex/hooks/six-hats-stop.sh"
+#   timeout = 15
+#   statusMessage = "six-hats: checking whether the run is finished"
+#   # async = false            # default; keep it false so Codex waits
+#   #                          # for the answer before ending the turn
+#   # additionalContextLimit = 2500   # default

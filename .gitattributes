@@ -1,0 +1,4 @@
+# Keep LF everywhere so packaged files compare byte-for-byte with installed copies on every OS.
+* text=auto eol=lf
+# Six Hats is a binary zip; never let git touch its bytes.
+*.skill binary
