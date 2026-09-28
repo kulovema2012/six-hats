@@ -1,6 +1,6 @@
 {
   "name": "six-hats",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Six Hats: a six-agent task-execution team (White, Green, Yellow, Black, Red, Blue) for Claude Code and Codex, with a ChatGPT version",
   "type": "module",
   "bin": {

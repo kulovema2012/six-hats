@@ -90,11 +90,19 @@ so neither tool ever loads the other's.
 | `--no-agents` | skip the hat agent files; the skill then briefs general agents itself |
 | `--codex-hooks` | also install the optional Codex Stop and BLACK-report hooks. Project scope only, because the hooks call their scripts by a path relative to the repository. Needs `sh` and `jq`. |
 | `--dry-run` | show what would change |
+| `--keep-legacy` | leave old copies in `~/.codex/skills` / `$CODEX_HOME/skills` instead of removing them |
 
 `npx -y six-hats verify` checks the install, and `npx -y six-hats uninstall`
 removes it (pass the same `--scope` you installed with). Anything the installer
 overwrites is copied to `~/.six-hats-backups/<timestamp>/` first, and running
 install again only changes what differs.
+
+**Updating** — run `npx -y six-hats@latest` again. Besides updating changed files, it:
+- replaces a link at `~/.claude/skills/six-hats` or `~/.agents/skills/six-hats` with a real folder, because the Claude and Codex copies are different files and a link would make one overwrite the other;
+- backs up and removes old copies in `~/.codex/skills` (and `$CODEX_HOME/skills`), so Codex doesn't load six-hats twice;
+- warns if your claude.ai account also has six-hats (synced into `~/.claude/skills/synced/`), which Claude Code would load as a duplicate.
+
+`verify` fails while any of these remain.
 
 **By hand** — the full manual steps are in `payload/claude/INSTALL.md` and
 `payload/codex/INSTALL.md`.
@@ -107,6 +115,9 @@ install again only changes what differs.
 **claude.ai and the Claude desktop app** — upload `payload/six-hats.skill` as a
 custom skill. That copy has no Stop hook, because the upload
 format does not accept one; use `/goal` there instead, as the skill explains.
+If you also use Claude Code, note that claude.ai syncs account skills into Claude
+Code, so that device would load six-hats twice. Use either the claude.ai upload or
+the npm install on such a device, not both.
 
 ---
 

@@ -28,6 +28,7 @@ const DRY = hasFlag('--dry-run');
 const ONLY = optionValue('--only');
 const WANT_AGENTS = !hasFlag('--no-agents');
 const WANT_HOOKS = hasFlag('--codex-hooks');
+const KEEP_LEGACY = hasFlag('--keep-legacy');
 const SCOPE = optionValue('--scope') ?? 'user';
 const PROJECT_SCOPE = SCOPE === 'project';
 const PROJECT = path.resolve(optionValue('--project') ?? process.cwd());
@@ -146,6 +147,84 @@ function loadJson(file) {
   }
 }
 
+// ---------- old, linked and account copies ----------
+
+const lexists = (p) => {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const isLink = (p) => lexists(p) && fs.lstatSync(p).isSymbolicLink();
+const realpathOrNull = (p) => {
+  try {
+    return fs.realpathSync(p).toLowerCase();
+  } catch {
+    return null;
+  }
+};
+
+function backupPath(p) {
+  const rel = path.relative(HOME, p);
+  return path.join(BACKUP_DIR, rel.startsWith('..') || path.isAbsolute(rel) ? path.join('outside-home', p.replace(/^[A-Za-z]:/, (d) => d[0])) : rel);
+}
+
+// Moves a whole folder (or just a link, never its target) into the backup directory.
+function removeTree(p, why) {
+  if (!lexists(p)) return;
+  note(`remove ${p}${why ? `  (${why})` : ''}`);
+  if (DRY) return;
+  const to = backupPath(p);
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  if (isLink(p)) {
+    fs.writeFileSync(`${to}.link.txt`, fs.readlinkSync(p));
+    fs.rmSync(p, { recursive: false, force: true });
+  } else {
+    fs.cpSync(p, to, { recursive: true });
+    fs.rmSync(p, { recursive: true, force: true });
+  }
+  backedUp = true;
+}
+
+// The Claude and Codex skills must be two real folders. A link here (e.g. a single-source junction some setups use
+// for other skills) would make one tool's files overwrite the other's, so it is replaced by a real folder.
+function unlinkSkillDir(dir) {
+  if (isLink(dir)) removeTree(dir, 'it was a link; six-hats keeps separate Claude and Codex copies');
+}
+
+// Older Codex versions read <codex home>/skills; a copy left there makes Codex load six-hats twice. Orca and similar
+// launchers set CODEX_HOME, and its skills folder may be a link to ~/.codex/skills, so folders are compared resolved.
+function legacyCodexCopies() {
+  const codexHome = optionValue('--codex-home') ?? (optionValue('--home') ? undefined : process.env.CODEX_HOME);
+  const homes = PROJECT_SCOPE ? [path.join(ROOT, '.codex')] : [path.join(HOME, '.codex'), codexHome].filter(Boolean);
+  const seen = new Set();
+  return homes
+    .map((h) => path.join(path.resolve(h), 'skills', 'six-hats'))
+    .filter((d) => {
+      const key = path.join(realpathOrNull(path.dirname(d)) ?? path.dirname(d).toLowerCase(), 'six-hats').toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return lexists(d);
+    });
+}
+
+// Skills added to a claude.ai account sync into ~/.claude/skills/synced/<account>/<name>; Claude Code loads them next
+// to local skills and the sync restores them if deleted here, so they can only be reported.
+function syncedClaudeCopies() {
+  if (PROJECT_SCOPE) return [];
+  const root = path.join(HOME, '.claude', 'skills', 'synced');
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => path.join(root, e.name, 'six-hats'))
+    .filter((d) => fs.existsSync(path.join(d, 'SKILL.md')));
+}
+
+const syncedAdvice = (d) =>
+  `claude.ai account copy found: ${d}. Claude Code loads it alongside this install and sync restores it if deleted here; delete "six-hats" in claude.ai > Settings > Capabilities > Skills.`;
+
 // ---------- Codex hooks (project scope only) ----------
 
 // The shipped hooks.json invokes the scripts by a path relative to the repository (`sh .codex/hooks/...`), which
@@ -200,7 +279,9 @@ function removeCodexHooks() {
 
 function install() {
   if (forClaude) {
+    unlinkSkillDir(DEST.claudeSkill);
     mirrorDir(SRC.claudeSkill, DEST.claudeSkill, 'Claude Code skill: /six-hats');
+    for (const d of syncedClaudeCopies()) followUps.push(syncedAdvice(d));
     if (WANT_AGENTS) copyEach(SRC.claudeAgents, DEST.claudeAgents, /^hat-.*\.md$/, 'Claude hat agent');
     else removeEach(SRC.claudeAgents, DEST.claudeAgents, /^hat-.*\.md$/, 'agents not wanted');
     followUps.push('Claude Code: run /reload-skills (or restart), then /six-hats <task>.');
@@ -209,7 +290,13 @@ function install() {
     }
   }
   if (forCodex) {
+    unlinkSkillDir(DEST.codexSkill);
     mirrorDir(SRC.codexSkill, DEST.codexSkill, 'Codex skill: $six-hats');
+    for (const d of legacyCodexCopies()) {
+      if (!lexists(d)) continue; // already removed through another path
+      if (KEEP_LEGACY) followUps.push(`old Codex copy left in place (--keep-legacy): ${d}; Codex will load six-hats twice`);
+      else removeTree(d, 'old Codex skills folder; Codex would load six-hats twice');
+    }
     if (WANT_AGENTS) copyEach(SRC.codexAgents, DEST.codexAgents, /^hat-.*\.toml$/, 'Codex hat agent');
     else removeEach(SRC.codexAgents, DEST.codexAgents, /^hat-.*\.toml$/, 'agents not wanted');
     if (WANT_HOOKS) ensureCodexHooks();
@@ -222,14 +309,22 @@ function install() {
 }
 
 function uninstall() {
+  // A link is removed as a link; deleting the files inside it would empty whatever folder it points at.
+  const removeSkillDir = (dir) => {
+    if (isLink(dir)) return removeTree(dir, 'link');
+    for (const rel of listFiles(dir)) deleteFile(path.join(dir, rel));
+    pruneDir(dir);
+  };
   if (forClaude) {
-    for (const rel of listFiles(DEST.claudeSkill)) deleteFile(path.join(DEST.claudeSkill, rel));
-    pruneDir(DEST.claudeSkill);
+    removeSkillDir(DEST.claudeSkill);
     removeEach(SRC.claudeAgents, DEST.claudeAgents, /^hat-.*\.md$/, 'Claude hat agent');
+    for (const d of syncedClaudeCopies()) followUps.push(syncedAdvice(d));
   }
   if (forCodex) {
-    for (const rel of listFiles(DEST.codexSkill)) deleteFile(path.join(DEST.codexSkill, rel));
-    pruneDir(DEST.codexSkill);
+    removeSkillDir(DEST.codexSkill);
+    if (!KEEP_LEGACY) {
+      for (const d of legacyCodexCopies()) if (lexists(d)) removeTree(d, 'old Codex skills folder');
+    }
     removeEach(SRC.codexAgents, DEST.codexAgents, /^hat-.*\.toml$/, 'Codex hat agent');
     if (PROJECT_SCOPE) removeCodexHooks();
   }
@@ -261,6 +356,9 @@ function frontmatterName(file) {
 
 function verify() {
   if (forClaude) {
+    if (isLink(DEST.claudeSkill)) check('FAIL', 'Claude skill is a real folder', `${DEST.claudeSkill} is a link; run install to replace it`);
+    const synced = syncedClaudeCopies();
+    check(synced.length ? 'FAIL' : 'ok', 'no claude.ai account copy', synced.length ? synced.map(syncedAdvice).join(' ') : '');
     compareDir('Claude skill', SRC.claudeSkill, DEST.claudeSkill);
     const name = frontmatterName(path.join(DEST.claudeSkill, 'SKILL.md'));
     check(name === 'six-hats' ? 'ok' : 'FAIL', 'Claude skill name', name ?? 'SKILL.md frontmatter unreadable');
@@ -271,9 +369,10 @@ function verify() {
     const name = frontmatterName(path.join(DEST.codexSkill, 'SKILL.md'));
     check(name === 'six-hats' ? 'ok' : 'FAIL', 'Codex skill name', name ?? 'SKILL.md frontmatter unreadable');
     compareEach('Codex hat agents', SRC.codexAgents, DEST.codexAgents, /^hat-.*\.toml$/);
-    // A copy of the skill under ~/.codex/skills as well as ~/.agents/skills makes Codex list it twice.
-    const stray = path.join(HOME, '.codex', 'skills', 'six-hats');
-    check(fs.existsSync(stray) ? 'warn' : 'ok', 'no duplicate Codex skill', fs.existsSync(stray) ? `${stray} also exists; Codex will load both` : '');
+    if (isLink(DEST.codexSkill)) check('FAIL', 'Codex skill is a real folder', `${DEST.codexSkill} is a link; run install to replace it`);
+    // A copy of the skill under <codex home>/skills as well as ~/.agents/skills makes Codex list it twice.
+    const strays = legacyCodexCopies();
+    check(strays.length ? 'FAIL' : 'ok', 'no duplicate Codex skill', strays.length ? `${strays.join(', ')} also exist(s); Codex will load both. Run install to remove.` : '');
     if (PROJECT_SCOPE) {
       const { data } = (() => {
         try {
@@ -304,7 +403,9 @@ const USAGE = [
   '  --no-agents           skip the hat agent files; the skill then briefs general agents itself',
   '  --codex-hooks         also install the optional Codex Stop and BLACK-report hooks (project scope only)',
   '  --dry-run             show what would change',
-  '  --home DIR            treat DIR as the home directory (testing)',
+  '  --home DIR            treat DIR as the home directory (testing; the inherited CODEX_HOME is then ignored)',
+  '  --keep-legacy         leave old copies in <codex home>/skills instead of backing them up and removing them',
+  '  --codex-home DIR      also clean up DIR/skills (defaults to $CODEX_HOME when --home is not given)',
 ].join('\n');
 
 try {
@@ -326,7 +427,7 @@ try {
       for (const a of actions) console.log(`  - ${a}`);
     }
     if (backedUp) console.log(`Backups: ${BACKUP_DIR}`);
-    if (!DRY && command === 'install') for (const line of followUps) console.log(`  ! ${line}`);
+    if (!DRY) for (const line of followUps) console.log(`  ! ${line}`);
   } else if (command === 'verify') {
     process.exitCode = verify();
   } else {
